@@ -1,0 +1,10 @@
+# generated keograms
+keogram-out/
+keogram-out2/
+
+# generated segment folders
+segments-out/
+segments-out2/
+
+# generated CSVs
+*.csv
