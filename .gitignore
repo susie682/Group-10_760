@@ -1,10 +1,14 @@
 # generated keograms
 keogram-out/
 keogram-out2/
+keogram-out2019/
 
 # generated segment folders
 segments-out/
 segments-out2/
+segments-out2019/
 
 # generated CSVs
 *.csv
+2019/
+2020/
