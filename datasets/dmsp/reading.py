@@ -10,13 +10,13 @@ PF_LON = -147.5
 ALT_KM = 0  # Ground level
 
 # Convert to geomagnetic coordinates
-dt = datetime(2016, 1, 1, 6, 0, 0)
+dt = datetime(2018, 1, 21, 18, 0, 0)
 mag_lat, mag_lon, _ = aacgmv2.convert_latlon(PF_LAT, PF_LON, ALT_KM, dtime=dt)
 mag_lon_360 = mag_lon % 360
 print(f"Poker Flat geomagnetic coordinates: lat={mag_lat}, lon={mag_lon} ({mag_lon_360})")
 
 # Open file
-file_path = "2016/dmspf18_ssusi_edr-aurora_2016001T064259-2016001T082450-REV31990_vA8.2.0r000.nc" 
+file_path = "dmspf17_ssusi_edr-aurora_2018021T183807-2018021T201958-REV57870_vA8.2.0r000.nc" 
 
 ds = xr.open_dataset(file_path, engine="netcdf4")
 
@@ -44,7 +44,7 @@ def haversine(lat1, lon1, lat2, lon2):
     c = 2 * np.arcsin(np.sqrt(a))
     return R * c
 
-def query_nearest_points(lat, lon, aur_data, lat_grid, lon_grid, ut_grid=None, n_points=3):
+def query_nearest_points(lat, lon, aur_data, lat_grid, lon_grid, ut_grid=None, n_points=10):
     """
     Query the nearest n_points grid points with valid data (exclude NaN and 0),
     sorted by great-circle distance
@@ -99,11 +99,11 @@ def hours_to_utc(hours):
 
 # Query the nearest 3 valid points in the Northern Hemisphere
 aur_data_n, lat_grid_n, lon_grid_n, ut_grid_n = select_hemisphere_data("north")
-nearest_north = query_nearest_points(mag_lat, mag_lon, aur_data_n, lat_grid_n, lon_grid_n, ut_grid_n, n_points=3)
+nearest_north = query_nearest_points(mag_lat, mag_lon, aur_data_n, lat_grid_n, lon_grid_n, ut_grid_n, n_points=10)
 
 # Query the nearest 3 valid points in the Southern Hemisphere
 aur_data_s, lat_grid_s, lon_grid_s, ut_grid_s = select_hemisphere_data("south")
-nearest_south = query_nearest_points(-mag_lat, mag_lon, aur_data_s, lat_grid_s, lon_grid_s, ut_grid_s, n_points=3)
+nearest_south = query_nearest_points(-mag_lat, mag_lon, aur_data_s, lat_grid_s, lon_grid_s, ut_grid_s, n_points=10)
 
 # Output results
 print("=== Nearest 3 valid points in Northern Hemisphere ===")
