@@ -24,6 +24,39 @@ def convert_RGB_to_grayscale(image_array):
             0.587 * image_array[:, :, 1] +
             0.114 * image_array[:, :, 2])
 
+from matplotlib import colors as mcolors
+
+# Detect "red" robustly in HSV (tunable)
+def make_red_mask_hsv(rgb,
+                      # red hue ranges (wrap around 0)
+                      red_h1=(0.00, 0.05),   # 0°–18° in [0,1]
+                      red_h2=(0.92, 1.00),   # 330°–360°
+                      s_min=0.30,            # min saturation
+                      v_min=0.20):           # min value
+    arr = rgb.astype(np.float32) / 255.0
+    hsv = mcolors.rgb_to_hsv(arr)  # (H, W, 3) in [0,1]
+    Hh, Ss, Vv = hsv[...,0], hsv[...,1], hsv[...,2]
+    is_red = (
+        ((Hh >= red_h1[0]) & (Hh <= red_h1[1])) |
+        ((Hh >= red_h2[0]) & (Hh <= red_h2[1]))
+    ) & (Ss >= s_min) & (Vv >= v_min)
+    return is_red
+
+def valid_mask_white_purple(rgb,
+                            white_v_min=0.95, white_s_max=0.20,
+                            magenta_h1=(0.83, 1.00), magenta_h2=(0.00, 0.07),
+                            magenta_s_min=0.35, magenta_v_min=0.25):
+    arr = rgb.astype(np.float32) / 255.0
+    hsv = mcolors.rgb_to_hsv(arr)
+    Hh, Ss, Vv = hsv[...,0], hsv[...,1], hsv[...,2]
+    white = (Vv >= white_v_min) & (Ss <= white_s_max)
+    magenta = (
+        ((Hh >= magenta_h1[0]) & (Hh <= magenta_h1[1])) |
+        ((Hh >= magenta_h2[0]) & (Hh <= magenta_h2[1]))
+    ) & (Ss >= magenta_s_min) & (Vv >= magenta_v_min)
+    valid = ~(white | magenta)
+    return valid
+
 def hour_to_col(h, width):
     return int(np.floor((h / 24.0) * width))
 
@@ -149,6 +182,85 @@ def write_segment_stats_csv(input_dir="keogram-out2",
 
     print(f"[done] Wrote segment stats to {output_csv}")
 
+def write_segment_stats_csv_with_red_filter(
+        input_dir="keogram-out2",
+        output_csv="keogram_segment_stats.csv",
+        n_sections=8,
+        red_ratio_threshold=0.50,
+        require_min_valid_frac=0.30,     # skip if <30% pixels are valid
+        use_invalid_mask=True            # apply white/purple mask before ratios/stats
+    ):
+    """
+    For every *inpaint.png (and *inpant.png) under input_dir:
+      - for each of 8 segments:
+          * compute valid mask (optional)
+          * compute red_ratio = (# red & valid) / (# valid)
+          * if red_ratio > threshold -> skip segment (do not write a row)
+          * else write: YYYY-MM-DD-h1:h2, mean, median, max  (on valid pixels only)
+    """
+    in_dir = Path(input_dir)
+    files = sorted(set(in_dir.glob("**/*inpaint.png")) |
+                   set(in_dir.glob("**/*inpant.png")))
+    if not files:
+        print(f"[warn] No inpainted PNGs found under {in_dir}")
+        return
+
+    # optional audit file for excluded segments
+    excluded_path = Path(output_csv).with_name("keogram_segment_excluded.csv")
+
+    with open(output_csv, "w", newline="") as f_out, \
+         open(excluded_path, "w", newline="") as f_exc:
+        out_w = csv.writer(f_out)
+        exc_w = csv.writer(f_exc)
+        out_w.writerow(["segment", "mean", "median", "max"])
+        exc_w.writerow(["segment", "reason", "red_ratio", "valid_frac"])
+
+        for p in files:
+            rgb, H, W = convert_image_to_RGBarray(p)
+            gray = convert_RGB_to_grayscale(rgb)
+            yyyymmdd = _extract_yyyymmdd(p.stem)
+            date_fmt = f"{yyyymmdd[0:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
+
+            for i in range(n_sections):
+                start_h = int(24 * i / n_sections)
+                end_h   = int(24 * (i + 1) / n_sections)
+                c0 = hour_to_col(start_h, W)
+                c1 = hour_to_col(end_h,   W)
+
+                seg_rgb  = rgb[:, c0:c1, :]
+                seg_gray = gray[:, c0:c1]
+
+                # valid pixels (optional) + red ratio measured on valid pixels only
+                valid = valid_mask_white_purple(seg_rgb) if use_invalid_mask else np.ones(seg_gray.shape, bool)
+                valid_count = int(valid.sum())
+                valid_frac  = valid_count / (seg_gray.size)
+
+                if valid_frac < require_min_valid_frac:
+                    seg_label = f"{date_fmt}-{start_h}:{end_h}"
+                    exc_w.writerow([seg_label, "low_valid_coverage", "", f"{valid_frac:.3f}"])
+                    continue
+
+                red_mask = make_red_mask_hsv(seg_rgb)
+                red_ratio = (red_mask & valid).sum() / valid_count
+
+                if red_ratio > red_ratio_threshold:
+                    seg_label = f"{date_fmt}-{start_h}:{end_h}"
+                    exc_w.writerow([seg_label, "red_ratio_exceeds_threshold", f"{red_ratio:.3f}", f"{valid_frac:.3f}"])
+                    continue
+
+                # compute stats ONLY on valid pixels
+                seg_vals = seg_gray[valid].astype(float)
+                mean_v   = float(seg_vals.mean())
+                median_v = float(np.median(seg_vals))
+                max_v    = float(seg_vals.max())
+
+                seg_label = f"{date_fmt}-{start_h}"
+                out_w.writerow([seg_label, f"{mean_v:.2f}", f"{median_v:.2f}", f"{max_v:.2f}"])
+
+            print(f"[ok] {p.name} -> CSV rows written (red-threshold={red_ratio_threshold:.2f})")
+
+    print(f"[done] Stats -> {output_csv} | Exclusions -> {excluded_path}")
+
 def process_all_with_csv(input_dir="keogram-out2",
                          output_dir="segments-out",
                          output_csv="keogram_segment_stats.csv",
@@ -240,8 +352,17 @@ def process_all(input_dir="keogram-out2", output_dir="segments-out", n_sections=
 if __name__ == "__main__":
     # process_all(input_dir="keogram-out2", output_dir="segments-out", n_sections=8)
     process_all_with_csv(
-        input_dir="keogram-out2",
-        output_dir="segments-out",
-        output_csv="keogram_segment_stats.csv",
+        input_dir="keogram-out2015",
+        output_dir="segments-out2015",
+        output_csv="keogram_segment_stats2015.csv",
         n_sections=8
     )
+
+    write_segment_stats_csv_with_red_filter(
+            input_dir="keogram-out2015",
+            output_csv="keogram_segment_stats2015-v2.csv",
+            n_sections=8,
+            red_ratio_threshold=0.50,   # your 50% rule
+            require_min_valid_frac=0.30,
+            use_invalid_mask=True
+        )
