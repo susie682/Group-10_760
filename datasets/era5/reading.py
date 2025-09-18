@@ -1,13 +1,16 @@
 import xarray as xr
 
-# Open the downloaded nc file
-ds = xr.open_dataset('ERA5-2015.nc')
+# Open NC files
+ds_06 = xr.open_dataset('ERA5_2015_06UTC_merged.nc')
+ds_18 = xr.open_dataset('ERA5_2015_18UTC_merged.nc')
 
-# Inspect the entire dataset (optional)
-# print(ds)
+# Check time/valid_time dimension
+print(ds_06)
+print(ds_18)
 
-# Calculate the average total cloud cover over latitude and longitude
-tcc_avg = ds['tcc'].mean(dim=['latitude', 'longitude'])
+# Only check the time coordinate array
+print("06UTC times:")
+print(ds_06['valid_time'].values)  # If your merged file has time dimension named valid_time
+print("18UTC times:")
+print(ds_18['valid_time'].values)
 
-# Show result
-print(tcc_avg)
